@@ -117,8 +117,7 @@ _world_data = None
 def get_world_data():
     global _world_data
     if _world_data is None:
-        import geopandas as gpd
-        import os, urllib.request, zipfile, tempfile
+        import os, urllib.request, zipfile
 
         # Cache path
         cache_dir = os.path.expanduser("~/.cache/fourier_shapes")
@@ -175,15 +174,8 @@ def get_geo_contour(name):
     return coords
 
 
-BUILTIN_SHAPES = {
-    "circle": lambda n: np.exp(2j * np.pi * np.linspace(0, 1, n, endpoint=False)),
-    "square": None,
-    "triangle": None,
-    "star": None,
-    "heart": None,
-    "arrow": None,
-    "spiral": None,
-}
+def make_circle(n):
+    return np.exp(2j * np.pi * np.linspace(0, 1, n, endpoint=False))
 
 
 def make_square(n):
@@ -238,30 +230,27 @@ def make_arrow(n):
 def make_spiral(n):
     t = np.linspace(0, 6*np.pi, n, endpoint=False)
     r = t / (6*np.pi)
-    return r * np.exp(1j*t) / 1.0
+    return r * np.exp(1j*t)
+
+
+BUILTIN_SHAPES = {
+    "circle": make_circle,
+    "square": make_square,
+    "triangle": make_triangle,
+    "star": make_star,
+    "heart": make_heart,
+    "arrow": make_arrow,
+    "spiral": make_spiral,
+}
 
 
 def get_shape_signal(name, n=512):
     """Return complex signal for a given shape name."""
     key = name.lower().strip()
 
-    # Try built-in shapes first
-    if key == "circle":
-        sig = BUILTIN_SHAPES["circle"](n)
-    elif key == "square":
-        sig = make_square(n)
-    elif key == "triangle":
-        sig = make_triangle(n)
-    elif key == "star":
-        sig = make_star(n)
-    elif key == "heart":
-        sig = make_heart(n)
-    elif key == "arrow":
-        sig = make_arrow(n)
-    elif key == "spiral":
-        sig = make_spiral(n)
+    if key in BUILTIN_SHAPES:
+        sig = BUILTIN_SHAPES[key](n)
     else:
-        # Try geographic shape
         coords = get_geo_contour(name)
         if coords is None:
             return None, f"Shape '{name}' not found."
@@ -419,6 +408,19 @@ class FourierApp:
     def _on_slider(self, val):
         self.N_CIRCLES = int(val)
 
+    def _rebuild_circle_artists(self, n):
+        for art in self.circles_artists + self.lines_artists:
+            art.remove()
+        self.circles_artists.clear()
+        self.lines_artists.clear()
+        for _ in range(n):
+            circ = plt.Circle((0, 0), 0, fill=False, color="#334466",
+                              lw=0.6, alpha=0.5)
+            self.ax.add_patch(circ)
+            self.circles_artists.append(circ)
+            ln, = self.ax.plot([], [], color="#5566aa", lw=0.8, alpha=0.7)
+            self.lines_artists.append(ln)
+
     def _on_generate(self, event=None):
         name = self.textbox.text.strip()
         if not name:
@@ -437,10 +439,7 @@ class FourierApp:
 
         self.shape_name = name
         self.epicycles = compute_dft(sig)
-        self.target_path = [
-            epicycles_point(self.epicycles, k / self.N_SAMPLES, len(self.epicycles))[0]
-            for k in range(self.N_SAMPLES)
-        ]
+        self.target_path = sig
 
         # Update equation
         eq_str = build_equation_str(self.epicycles, n_terms=8)
@@ -457,28 +456,15 @@ class FourierApp:
         )
 
         # Draw target shape faintly
-        tx = [p.real for p in self.target_path] + [self.target_path[0].real]
-        ty = [p.imag for p in self.target_path] + [self.target_path[0].imag]
-        self.target_line.set_data(tx, ty)
+        closed = np.append(self.target_path, self.target_path[0])
+        self.target_line.set_data(closed.real, closed.imag)
 
         # Reset trace
         self.trace = []
         self.frame = 0
 
-        # Clear old circle artists
-        for art in self.circles_artists + self.lines_artists:
-            art.remove()
-        self.circles_artists.clear()
-        self.lines_artists.clear()
-
         n = min(self.N_CIRCLES, len(self.epicycles))
-        for _ in range(n):
-            circ = plt.Circle((0, 0), 0, fill=False, color="#334466",
-                               lw=0.6, alpha=0.5)
-            self.ax.add_patch(circ)
-            self.circles_artists.append(circ)
-            ln, = self.ax.plot([], [], color="#5566aa", lw=0.8, alpha=0.7)
-            self.lines_artists.append(ln)
+        self._rebuild_circle_artists(n)
 
         if self.anim is not None:
             self.anim.event_source.stop()
@@ -497,28 +483,17 @@ class FourierApp:
         self.fig.canvas.draw_idle()
 
     def _update(self, frame):
-        t = frame / self.N_SAMPLES
-        n = min(self.N_CIRCLES, len(self.epicycles))
+        if frame == 0:
+            self.trace.clear()
 
-        # Recheck slider
+        t = frame / self.N_SAMPLES
         n = min(int(self.slider.val), len(self.epicycles))
 
         tip, centers = epicycles_point(self.epicycles, t, n)
         self.trace.append(tip)
 
-        # Rebuild circle artists if count changed
         if len(self.circles_artists) != n:
-            for art in self.circles_artists + self.lines_artists:
-                art.remove()
-            self.circles_artists.clear()
-            self.lines_artists.clear()
-            for _ in range(n):
-                circ = plt.Circle((0, 0), 0, fill=False, color="#334466",
-                                   lw=0.6, alpha=0.5)
-                self.ax.add_patch(circ)
-                self.circles_artists.append(circ)
-                ln, = self.ax.plot([], [], color="#5566aa", lw=0.8, alpha=0.7)
-                self.lines_artists.append(ln)
+            self._rebuild_circle_artists(n)
 
         # Update circles and arms
         for i, (circ, ln) in enumerate(zip(self.circles_artists, self.lines_artists)):
@@ -546,10 +521,6 @@ class FourierApp:
             mx, my = (xmin + xmax) / 2, (ymin + ymax) / 2
             self.ax.set_xlim(mx - span, mx + span)
             self.ax.set_ylim(my - span, my + span)
-
-        # If loop restarted, clear trace
-        if frame == 0:
-            self.trace.clear()
 
         return []
 
