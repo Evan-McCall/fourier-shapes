@@ -35,10 +35,22 @@ pip install -r requirements.txt
 ## Run
 
 ```bash
-python fourier_shapes.py
+python -m fourier_shapes
 ```
 
 Type a shape name into the text box and hit Enter (or click **Generate**). Drag the **Circles** slider to change how many Fourier terms are drawn.
+
+## Project layout
+
+```
+fourier_shapes/
+├── __main__.py   # python -m fourier_shapes entry point
+├── app.py        # matplotlib UI + animation loop
+├── fourier.py    # DFT decomposition and epicycle evaluation
+├── shapes.py     # built-in parametric shapes + unified signal provider
+├── signals.py    # path resampling and normalization
+└── geo.py        # Natural Earth country loader
+```
 
 ## Notes
 
